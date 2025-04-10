@@ -1,0 +1,22 @@
+{
+  "name": "bullas-auto-claim",
+  "version": "1.0.0",
+  "description": "Automatically claim rewards from Bullas game at regular intervals",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "berachain",
+    "blockchain",
+    "game",
+    "auto-claim",
+    "bullas"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "ethers": "^5.7.2"
+  }
+}
