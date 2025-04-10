@@ -6,7 +6,7 @@ const path = require('path');
 // 环境变量配置
 const RPC_URL = process.env.RPC_URL || 'https://rpc.berachain.com';
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
-const GAME_CONTRACT_ADDRESS = process.env.GAME_CONTRACT_ADDRESS || '0x8d15Db9CeE68beF3beb65c576180e6D83F5c431D';
+const GAME_CONTRACT_ADDRESS = process.env.GAME_CONTRACT_ADDRESS;
 const TOKEN_ID = parseInt(process.env.TOKEN_ID);
 const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL || '28800'); // 默认8小时检查一次
 
