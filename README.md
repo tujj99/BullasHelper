@@ -20,8 +20,9 @@ npm install ethers@5.7.2 dotenv
 ```
 RPC_URL=https://rpc.berachain.com
 PRIVATE_KEY=your_private_key_here
-GAME_CONTRACT_ADDRESS=0x8d15Db9CeE68beF3beb65c576180e6D83F5c431D
-TOKEN_ID=1699
+# Bullas V2
+GAME_CONTRACT_ADDRESS=your_game_CA
+TOKEN_ID=your_token_id
 CHECK_INTERVAL=28800  # 间隔时间（秒），默认8小时
 ```
 
