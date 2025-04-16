@@ -7,7 +7,9 @@ const path = require('path');
 const RPC_URL = process.env.RPC_URL || 'https://rpc.berachain.com';
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const GAME_CONTRACT_ADDRESS = process.env.GAME_CONTRACT_ADDRESS;
-const TOKEN_ID = parseInt(process.env.TOKEN_ID);
+// 将单个 TOKEN_ID 更改为 TOKEN_IDS 列表
+// const TOKEN_ID = parseInt(process.env.TOKEN_ID);
+const TOKEN_IDS_STRING = process.env.TOKEN_IDS; // 例如 "1,2,3"
 const CHECK_INTERVAL = parseInt(process.env.CHECK_INTERVAL || '28800'); // 默认8小时检查一次
 
 // 日志文件路径
@@ -31,264 +33,207 @@ const gameABI = [
 ];
 
 // 初始化
-console.log('初始化合约和钱包...');
+console.log('初始化提供者和钱包...');
 const provider = new ethers.providers.JsonRpcProvider(RPC_URL);
 const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
-const gameContract = new ethers.Contract(GAME_CONTRACT_ADDRESS, gameABI, wallet);
+// Game Contract 将在需要时实例化，因为我们可能需要针对不同的 tokenId 调用它（尽管地址相同）
+// const gameContract = new ethers.Contract(GAME_CONTRACT_ADDRESS, gameABI, wallet);
 
 console.log(`钱包地址: ${wallet.address}`);
 console.log(`游戏合约地址: ${GAME_CONTRACT_ADDRESS}`);
-console.log(`Token ID: ${TOKEN_ID}`);
+// console.log(`Token ID: ${TOKEN_ID}`); // 移除单 ID 日志
+
+// 解析 TOKEN_IDS
+let TOKEN_IDS = [];
+if (!TOKEN_IDS_STRING) {
+  console.error("错误：未在 .env 文件中定义 TOKEN_IDS");
+  process.exit(1);
+} else {
+  TOKEN_IDS = TOKEN_IDS_STRING.split(',')
+                              .map(id => parseInt(id.trim()))
+                              .filter(id => !isNaN(id)); // 过滤掉无效的数字
+}
+
+if (TOKEN_IDS.length === 0) {
+  console.error("错误：TOKEN_IDS 环境变量为空或格式无效。请提供逗号分隔的数字列表。");
+  process.exit(1);
+}
+
+console.log(`将处理的 Token IDs: ${TOKEN_IDS.join(', ')}`);
 console.log(`自动领取间隔: ${CHECK_INTERVAL / 60} 分钟 (${CHECK_INTERVAL / 3600} 小时)`);
 
 // 记录执行时间到日志文件 - 使用UTC时间记录
-function logClaimTime(txHash) {
+function logClaimTime(tokenId, txHash, message = 'Claim executed') {
   const now = new Date();
-  const logEntry = `${now.toISOString()} - Claim executed for TokenID: ${TOKEN_ID} - TX: ${txHash || 'unknown'}\n`;
-  
+  const logEntry = `${now.toISOString()} - ${message} for TokenID: ${tokenId} - TX: ${txHash || 'unknown'}\n`;
+
   fs.appendFileSync(LOG_FILE, logEntry);
-  console.log(`已记录执行时间到日志文件: ${LOG_FILE}`);
+  console.log(`[TokenID: ${tokenId}] 已记录日志: ${message}`);
 }
 
-// 读取上次执行时间 - 解析为UTC时间
-function getLastClaimTime() {
+// 读取特定 TokenID 的上次执行时间 - 解析为UTC时间
+function getLastClaimTime(tokenId) {
   if (!fs.existsSync(LOG_FILE)) {
-    console.log('未找到日志文件，这可能是首次运行');
+    console.log(`[TokenID: ${tokenId}] 未找到日志文件，视为首次运行`);
     return null;
   }
-  
+
   try {
     const logContent = fs.readFileSync(LOG_FILE, 'utf8');
     const logLines = logContent.trim().split('\n');
-    
-    if (logLines.length === 0) {
-      console.log('日志文件为空，可能是首次运行');
-      return null;
+
+    // 从后往前查找该 tokenId 的最新成功执行记录
+    for (let i = logLines.length - 1; i >= 0; i--) {
+      const line = logLines[i];
+      // 检查日志行是否包含正确的 tokenId 并且不是失败记录
+      if (line.includes(`TokenID: ${tokenId}`) && line.includes('Claim executed')) {
+        const isoTimeMatch = line.match(/^([\d\-T:\.Z]+)/);
+        if (isoTimeMatch && isoTimeMatch[1]) {
+          const lastClaimTime = new Date(isoTimeMatch[1]); // UTC 时间
+          const nextExecutionTimeUTC = new Date(lastClaimTime.getTime() + CHECK_INTERVAL * 1000);
+
+          // console.log(`[TokenID: ${tokenId}] 上次执行时间(UTC): ${lastClaimTime.toISOString()}`);
+          console.log(`[TokenID: ${tokenId}] 上次执行时间(本地): ${lastClaimTime.toLocaleString('zh-CN', {hour12: false})}`);
+          // console.log(`[TokenID: ${tokenId}] 下次执行时间(UTC): ${nextExecutionTimeUTC.toISOString()}`);
+          console.log(`[TokenID: ${tokenId}] 下次执行时间(本地): ${nextExecutionTimeUTC.toLocaleString('zh-CN', {hour12: false})}`);
+
+          return lastClaimTime; // 返回UTC时间对象
+        }
+      }
     }
-    
-    // 获取最后一行
-    const lastLine = logLines[logLines.length - 1];
-    // 从日志行中提取ISO时间字符串 (格式: "2023-04-15T12:34:56.789Z - Claim executed...")
-    const isoTimeMatch = lastLine.match(/^([\d\-T:\.Z]+)/);
-    
-    if (isoTimeMatch && isoTimeMatch[1]) {
-      // 将ISO字符串解析为UTC日期对象
-      const lastClaimTime = new Date(isoTimeMatch[1]);
-      
-      // 计算下次执行时间 (UTC)
-      const nextExecutionTimeUTC = new Date(lastClaimTime.getTime() + CHECK_INTERVAL * 1000);
-      
-      // 显示UTC和本地时间格式以便于理解
-      // console.log(`上次执行时间(UTC): ${lastClaimTime.toISOString()}`);
-      console.log(`上次执行时间(本地): ${lastClaimTime.toLocaleString('zh-CN', {hour12: false})}`);
-      // console.log(`下次执行时间(UTC): ${nextExecutionTimeUTC.toISOString()}`);
-      console.log(`下次执行时间(本地): ${nextExecutionTimeUTC.toLocaleString('zh-CN', {hour12: false})}`);
-      
-      return lastClaimTime; // 返回UTC时间对象
-    }
-    
-    console.log('无法从日志中解析时间，将立即执行');
-    return null;
+
+    console.log(`[TokenID: ${tokenId}] 未在日志中找到该 TokenID 的成功执行记录`);
+    return null; // 没有找到该 tokenId 的记录
   } catch (error) {
-    console.error('读取日志文件失败:', error.message);
+    console.error(`[TokenID: ${tokenId}] 读取日志文件失败:`, error.message);
     return null;
   }
 }
 
 // 调用合约claim函数
-async function claim() {
+async function claim(tokenId) {
   try {
-    console.log('开始执行claim...');
-    
-    // 计算并打印MethodID
-    const contractInterface = new ethers.utils.Interface(gameABI);
-    const claimMethodId = contractInterface.getSighash("claim");
-    console.log(`Claim 函数的 MethodID: ${claimMethodId}`);
-    
-    // 打印将要发送的交易数据
-    const callData = contractInterface.encodeFunctionData("claim", [TOKEN_ID]);
-    console.log(`即将发送的交易数据: ${callData}`);
-    
-    // 调用claim函数，传入tokenId
-    const tx = await gameContract.claim(TOKEN_ID);
-    console.log(`交易已提交，交易哈希: ${tx.hash}`);
-    
+    console.log(`[TokenID: ${tokenId}] 开始执行 claim...`);
+    const gameContract = new ethers.Contract(GAME_CONTRACT_ADDRESS, gameABI, wallet);
+
+    // --- 可选：打印 MethodID 和交易数据 (仅调试时需要) ---
+    // const contractInterface = new ethers.utils.Interface(gameABI);
+    // const claimMethodId = contractInterface.getSighash("claim");
+    // console.log(`[TokenID: ${tokenId}] Claim 函数的 MethodID: ${claimMethodId}`);
+    // const callData = contractInterface.encodeFunctionData("claim", [tokenId]);
+    // console.log(`[TokenID: ${tokenId}] 即将发送的交易数据: ${callData}`);
+    // --- 结束可选打印 ---
+
+    const tx = await gameContract.claim(tokenId, {
+      // 可以考虑添加 gas 限制或价格（如果需要）
+      // gasLimit: ethers.utils.hexlify(100000), // 示例
+      // gasPrice: ethers.utils.parseUnits('10', 'gwei'), // 示例
+    });
+    console.log(`[TokenID: ${tokenId}] 交易已提交，交易哈希: ${tx.hash}`);
+
     const receipt = await tx.wait();
-    console.log(`交易已确认，区块号: ${receipt.blockNumber}`);
-    console.log('成功领取奖励!');
-    
+    console.log(`[TokenID: ${tokenId}] 交易已确认，区块号: ${receipt.blockNumber}`);
+    console.log(`[TokenID: ${tokenId}] 成功领取奖励!`);
+
     // 记录本次执行时间和交易哈希
-    logClaimTime(tx.hash);
-    
+    logClaimTime(tokenId, tx.hash);
+
     return tx.hash;
   } catch (error) {
-    console.error('领取失败:', error.message);
+    console.error(`[TokenID: ${tokenId}] 领取失败:`, error.message);
     // 记录失败信息
-    logClaimTime(`领取失败: ${error.message}`);
+    logClaimTime(tokenId, null, `领取失败: ${error.message}`);
     return false;
   }
 }
 
-// 监听与合约相关的所有交易 - 优化版
-async function setupContractMonitor() {
-  console.log(`开始监控合约 ${GAME_CONTRACT_ADDRESS} 的所有交易...`);
-  
-  try {
-    // 使用区块监听替代pending交易监听，更可靠
-    provider.on('block', async (blockNumber) => {
-      try {
-        // 获取最新区块
-        const block = await provider.getBlock(blockNumber, true);
-        
-        if (block && block.transactions) {
-          // 遍历区块中的所有交易
-          for (const tx of block.transactions) {
-            // 只关注发送到游戏合约的交易
-            if (tx.to && tx.to.toLowerCase() === GAME_CONTRACT_ADDRESS.toLowerCase()) {
-              console.log('\n===== 检测到游戏合约交易 =====');
-              console.log(`区块号: ${blockNumber}`);
-              console.log(`交易哈希: ${tx.hash}`);
-              console.log(`发送地址: ${tx.from}`);
-              console.log(`Gas价格: ${ethers.utils.formatUnits(tx.gasPrice || 0, 'gwei')} Gwei`);
-              
-              // 获取函数选择器（前4字节）
-              const functionSelector = tx.data.substring(0, 10);
-              console.log(`函数选择器: ${functionSelector}`);
-              
-              // 检查是否是claim函数
-              const claimSelector = '0x379607f5';  // 从您的日志中获取的实际claim函数选择器
-              if (functionSelector.toLowerCase() === claimSelector.toLowerCase()) {
-                console.log('⭐ 检测到claim操作!');
-                
-                try {
-                  // 解析tokenId参数
-                  const tokenIdHex = '0x' + tx.data.substring(10).padStart(64, '0');
-                  const tokenId = parseInt(tokenIdHex, 16);
-                  console.log(`Token ID: ${tokenId}`);
-                  
-                  // 检查是否是我们关注的tokenId
-                  if (tokenId === TOKEN_ID) {
-                    console.log(`⚠️ 检测到Token ID ${TOKEN_ID}的claim操作！`);
-                    
-                    // 如果不是由我们自己发起的交易
-                    if (tx.from.toLowerCase() !== wallet.address.toLowerCase()) {
-                      console.log('检测到外部claim操作，重置计时器...');
-                      // 记录此次外部claim
-                      logClaimTime(`EXTERNAL_CLAIM: ${tx.hash}`);
-                      // 重新设置下次执行时间（可选）
-                      resetTimer();
-                    } else {
-                      console.log('这是由本脚本发起的claim操作');
-                    }
-                  }
-                } catch (parseError) {
-                  console.log(`解析交易参数出错: ${parseError.message}`);
-                }
-              }
-              console.log('===========================\n');
-            }
-          }
-        }
-      } catch (blockError) {
-        console.error(`处理区块 ${blockNumber} 时出错:`, blockError.message);
-      }
-    });
-    
-    // 添加重置计时器函数
-    function resetTimer() {
-      // 清除现有的定时任务
-      if (global.nextExecutionTimer) {
-        clearTimeout(global.nextExecutionTimer);
-      }
-      
-      // 设置新的执行时间
-      const now = new Date();
-      const nextCheckTime = new Date(now.getTime() + CHECK_INTERVAL * 1000);
-      
-      console.log(`已重置计时器! 下次执行时间(本地): ${nextCheckTime.toLocaleString('zh-CN', {hour12: false})}`);
-      
-      // 设置新的定时器
-      global.nextExecutionTimer = setTimeout(executeAndScheduleNext, CHECK_INTERVAL * 1000);
-    }
-    
-    console.log('区块监控已启动，等待新区块...');
-  } catch (error) {
-    console.error('设置监控时出错:', error.message);
-  }
-}
-
-// 主函数：根据上次执行时间决定何时调用claim函数
+// 主函数：为每个 Token ID 安排初始检查和执行
 async function run() {
-  // 使用UTC时间显示启动时间，也显示本地时间便于理解
+  console.log(`\n=== 程序启动 - 检查所有 Token IDs ===`);
   const nowUTC = new Date();
-  console.log(`\n=== 程序启动 ===`);
-  // console.log(`当前时间(UTC): ${nowUTC.toISOString()}`);
   console.log(`当前时间(本地): ${nowUTC.toLocaleString('zh-CN', {hour12: false})}`);
-  
-  // 读取上次执行时间 (UTC时间)
-  const lastClaimTime = getLastClaimTime();
-  
-  if (lastClaimTime) {
-    // 计算下次应该执行的时间 (UTC)
-    const nextExecutionTimeUTC = new Date(lastClaimTime.getTime() + CHECK_INTERVAL * 1000);
-    const nowUTC = new Date();
-    
-    if (nextExecutionTimeUTC > nowUTC) {
-      // 还没到执行时间，需要等待
-      const waitTime = nextExecutionTimeUTC.getTime() - nowUTC.getTime();
-      const waitMinutes = Math.round(waitTime / 1000 / 60);
-      const waitHours = Math.round(waitTime / 1000 / 3600 * 10) / 10;
-      
-      console.log(`距离下次执行还有 ${waitMinutes} 分钟 (约 ${waitHours} 小时)`);
-      console.log(`===================================`);
-      
-      // 设置定时器在适当的时间执行
-      setTimeout(executeAndScheduleNext, waitTime);
-      return;
+  console.log('===================================');
+
+  // 使用 for...of 循环并配合 await 来顺序处理每个 token ID 的初始检查
+  for (const tokenId of TOKEN_IDS) {
+    console.log(`\n--- 检查 TokenID: ${tokenId} ---`);
+    // 读取特定 TokenID 的上次执行时间 (UTC时间)
+    const lastClaimTime = getLastClaimTime(tokenId);
+    const currentTimeUTC = new Date(); // 获取当前 UTC 时间进行比较
+
+    if (lastClaimTime) {
+      // 计算下次应该执行的时间 (UTC)
+      const nextExecutionTimeUTC = new Date(lastClaimTime.getTime() + CHECK_INTERVAL * 1000);
+
+      if (nextExecutionTimeUTC > currentTimeUTC) {
+        // 还没到执行时间，需要等待
+        const waitTime = nextExecutionTimeUTC.getTime() - currentTimeUTC.getTime();
+        const waitMinutes = Math.round(waitTime / 1000 / 60);
+        const waitHours = Math.round(waitTime / 1000 / 3600 * 10) / 10;
+
+        console.log(`[TokenID: ${tokenId}] 距离下次执行还有 ${waitMinutes} 分钟 (约 ${waitHours} 小时)`);
+        console.log(`-----------------------------------`);
+
+        // 设置定时器在适当的时间为这个 tokenId 执行
+        // 注意：这里仍然使用 setTimeout 异步调度，不会阻塞循环
+        setTimeout(() => executeAndScheduleNext(tokenId), waitTime);
+      } else {
+        // 已经超过了应该执行的时间，立即执行
+        console.log(`[TokenID: ${tokenId}] 已超过计划执行时间，立即执行`);
+        // 使用 await 等待立即执行的任务完成（或失败并安排重试），再检查下一个 token id
+        await executeAndScheduleNext(tokenId);
+      }
     } else {
-      // 已经超过了应该执行的时间，立即执行
-      console.log('已超过计划执行时间，立即执行');
+      // 没有上次执行记录，立即执行
+      console.log(`[TokenID: ${tokenId}] 没有找到上次成功执行记录，立即执行`);
+      // 使用 await 等待立即执行的任务完成（或失败并安排重试），再检查下一个 token id
+      await executeAndScheduleNext(tokenId);
     }
-  } else {
-    // 没有上次执行记录，立即执行
-    console.log('没有找到上次执行记录，立即执行');
   }
-  
-  // 启动合约监控
-  await setupContractMonitor();
-  
-  // 立即执行并安排下一次
-  executeAndScheduleNext();
+  console.log(`\n=== 所有 Token ID 初始检查完成 ===`);
+  // run 函数本身不再无限循环，而是为每个 token ID 启动一个独立的调度循环
 }
 
-// 执行claim并安排下一次执行
-async function executeAndScheduleNext() {
+// 执行特定 tokenId 的 claim 并安排下一次执行
+async function executeAndScheduleNext(tokenId) {
+  let txResult = false; // 初始化为 false
   try {
     // 执行claim
-    const txResult = await claim();
-    
-    // 如果是失败的交易，可能需要更快地重试
+    txResult = await claim(tokenId);
+
+    // 如果是失败的交易，安排稍后重试
     if (!txResult) {
-      console.log('由于执行失败，将在1小时后重试');
-      setTimeout(executeAndScheduleNext, 3600 * 1000); // 1小时后重试
-      return;
+      const retryDelay = 3600 * 1000; // 1小时后重试 (单位：毫秒)
+      console.log(`[TokenID: ${tokenId}] 由于执行失败，将在 ${retryDelay / 1000 / 60} 分钟后重试`);
+      setTimeout(() => executeAndScheduleNext(tokenId), retryDelay);
+      return; // 失败后不再安排常规的下一次执行，等待重试
     }
   } catch (error) {
-    console.error('执行过程中出错:', error);
+    // 捕获 claim 函数内部未处理的意外错误
+    console.error(`[TokenID: ${tokenId}] 执行过程中发生意外错误:`, error);
+    // 也可以安排重试
+    const retryDelay = 3600 * 1000; // 1小时后重试
+    console.log(`[TokenID: ${tokenId}] 由于意外错误，将在 ${retryDelay / 1000 / 60} 分钟后重试`);
+    setTimeout(() => executeAndScheduleNext(tokenId), retryDelay);
+    return;
   }
-  
-  // 获取当前时间 (UTC)
+
+  // ---- 只有在 claim 成功后才执行这里的调度 ----
+  // 获取当前时间 (UTC) 用于计算下一次执行时间
   const currentTime = new Date();
   // 计算下次执行时间 (UTC)
   const nextCheckUTC = new Date(currentTime.getTime() + CHECK_INTERVAL * 1000);
-  // console.log(`下次执行时间(UTC): ${nextCheckUTC.toISOString()}`);
-  console.log(`当前时间(本地): ${currentTime.toLocaleString('zh-CN', {hour12: false})}`);
-  console.log(`下次执行时间(本地): ${nextCheckUTC.toLocaleString('zh-CN', {hour12: false})}`);
-  console.log('===================================');
-  
-  // 设置下次检查
-  setTimeout(executeAndScheduleNext, CHECK_INTERVAL * 1000);
+
+  console.log(`[TokenID: ${tokenId}] 本次领取成功。`);
+  console.log(`[TokenID: ${tokenId}] 当前时间(本地): ${currentTime.toLocaleString('zh-CN', {hour12: false})}`);
+  console.log(`[TokenID: ${tokenId}] 下次执行时间(本地): ${nextCheckUTC.toLocaleString('zh-CN', {hour12: false})}`);
+  console.log(`-----------------------------------`);
+
+  // 设置该 Token ID 的下次检查
+  setTimeout(() => executeAndScheduleNext(tokenId), CHECK_INTERVAL * 1000);
 }
 
 // 启动程序
-run(); 
+run();
+// 不再需要最后的 run() 调用，因为它现在由 run 函数内部的循环和 setTimeout 管理
+// run(); 
