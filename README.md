@@ -98,28 +98,6 @@ node index.js
 
 脚本将开始监控您的账户容量状态，并在容量满时自动领取奖励。
 
-## 如何获取游戏合约地址和ABI
-
-由于游戏合约地址和ABI可能不公开，您可以使用以下方法获取：
-
-1. 使用浏览器开发者工具分析游戏网站的网络请求
-2. 使用`explore.js`脚本分析您与游戏交互的交易
-3. 观察游戏网站的JavaScript源代码
-
-### 使用explore.js工具
-
-这个工具可以帮助您分析交易和合约事件，以便识别合约地址和函数：
-
-查看特定交易：
-```bash
-node explore.js tx YOUR_TRANSACTION_HASH
-```
-
-查看合约事件：
-```bash
-node explore.js events CONTRACT_ADDRESS [FROM_BLOCK] [TO_BLOCK]
-```
-
 ## 常见问题
 
 **Q: 游戏合约地址在哪里可以找到？**
