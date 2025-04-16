@@ -124,7 +124,7 @@ node explore.js events CONTRACT_ADDRESS [FROM_BLOCK] [TO_BLOCK]
 
 **Q: 游戏合约地址在哪里可以找到？**
 
-A: 您可以尝试通过分析游戏网站的网络请求或使用`explore.js`工具分析您的交易来找到合约地址。
+A: .env.example中已经提供
 
 **Q: 为什么脚本无法连接到网络？**
 
